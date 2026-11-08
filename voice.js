@@ -33,6 +33,7 @@
     clear: 'C', reset: 'C',
     delete: 'DEL', backspace: 'DEL', remove: 'DEL', del: 'DEL'
   };
+  var SYM = { '+': '+', '-': '-', '*': '*', '/': '/', '×': '*', '÷': '/', '=': '=' };
   var FILLER = { um: 1, uh: 1, er: 1, hmm: 1, please: 1, the: 1, and: 1, no: 1, nope: 1, a: 1 };
 
   var NUM_LIT = /^[0-9][0-9,]*(?:\.[0-9]+)?$/;
@@ -40,8 +41,11 @@
   // ---------- normalise + phrase fixes ----------
   function normalize(text) {
     var s = String(text).toLowerCase();
-    s = s.replace(/[-–—]/g, ' ');                     // fifty-two -> fifty two
+    s = s.replace(/([a-z])[-–—]([a-z])/g, '$1 $2');   // fifty-two -> fifty two (word-word only)
     s = s.replace(/[?!;:"'’‘]/g, ' ');
+    s = s.replace(/([×÷*+\-=()])/g, ' $1 ');          // split glued operator symbols: 350x250 -> 350 x 250
+    s = s.replace(/([0-9])([a-z])/g, '$1 $2');        // 350times -> 350 times
+    s = s.replace(/([a-z])([0-9])/g, '$1 $2');        // times250 -> times 250
     s = s.replace(/\b(divided by|divided into)\b/g, ' divide ');
     s = s.replace(/\b(multiplied by|multiply by)\b/g, ' multiply ');
     s = s.replace(/\binto\b/g, ' times ');            // Indian English: 2 into 2 = 2 x 2
@@ -110,6 +114,7 @@
         continue;
       }
       if (t === 'point' || t === 'dot' || t === 'decimal') { flush(); keys.push('.'); continue; }
+      if (SYM[t]) { flush(); keys.push(SYM[t]); continue; }
       if (t === '(' || t === ')') { flush(); keys.push(t); continue; }
       if (OP[t]) { flush(); keys.push(OP[t]); continue; }
       if (CMD[t]) { flush(); keys.push(CMD[t]); continue; }
@@ -120,7 +125,7 @@
   }
 
   // ---------- DOM / recognition (browser only) ----------
-  var rec = null, listening = false, committed = 0;
+  var rec = null, listening = false, lastKeys = [];
   var micBtn = null, statusEl = null;
 
   function $(id) { return document.getElementById(id); }
@@ -140,15 +145,29 @@
     statusEl.classList.toggle('live', !!live);
   }
 
-  function inject(keys) {
+  // Type the transcript's keys progressively: append the new tail, or clear+replay
+  // if the recognizer revised earlier words mid-utterance.
+  function applyTranscript(text) {
+    var keys = parseToKeys(text);
+    if (!keys.length) return;
     var C = root.FanumCalc;
     if (!C) return;
     C.open();
-    for (var i = 0; i < keys.length; i++) C.key(keys[i]);
+    var prefix = lastKeys.length <= keys.length;
+    if (prefix) {
+      for (var i = 0; i < lastKeys.length; i++) if (lastKeys[i] !== keys[i]) { prefix = false; break; }
+    }
+    if (prefix) {
+      for (var j = lastKeys.length; j < keys.length; j++) C.key(keys[j]);
+    } else {
+      C.key('C');
+      for (var k = 0; k < keys.length; k++) C.key(keys[k]);
+    }
+    lastKeys = keys.slice();
   }
 
   function beginRec() {
-    committed = 0;
+    lastKeys = [];
     try { rec.start(); } catch (err) {}
   }
 
@@ -159,20 +178,18 @@
     rec.interimResults = true;
     rec.lang = 'en-IN';
     rec.onresult = function (e) {
-      var interim = '';
-      for (var i = e.resultIndex; i < e.results.length; i++) {
-        var r = e.results[i];
-        if (r.isFinal) {
-          if (i >= committed) {
-            committed = i + 1;
-            var keys = parseToKeys(r[0].transcript);
-            if (keys.length) inject(keys);
-          }
-        } else {
-          interim += r[0].transcript;
-        }
+      var parts = [];
+      for (var i = 0; i < e.results.length; i++) {
+        var alt = e.results[i][0];
+        if (alt && alt.transcript) parts.push(alt.transcript);
       }
-      setStatus(interim ? 'Hearing: ' + interim : 'Listening…', !!interim);
+      var text = parts.join(' ');
+      if (text) {
+        applyTranscript(text);
+        setStatus('Hearing: ' + text, true);
+      } else {
+        setStatus('Listening…', false);
+      }
     };
     rec.onerror = function (e) {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {

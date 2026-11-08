@@ -39,7 +39,15 @@ var cases = [
   ['um three fifty',                    '350'],
   ['one oh two',                        '102'],
   ['ten thousand five hundred',         '10500'],
-  ['zero point zero five',              '0.05']
+  ['zero point zero five',              '0.05'],
+  // glued-token cases the recognizer actually produces on mobile
+  ['350x250',                           '350*250'],
+  ['350×250',                           '350*250'],
+  ['350times250',                       '350*250'],
+  ['350-250',                           '350-250'],
+  ['3.5plus2',                          '3.5+2'],
+  ['150plus167plus17802',               '150+167+17802'],
+  ['350 x 250',                         '350*250']
 ];
 
 var fails = 0;
